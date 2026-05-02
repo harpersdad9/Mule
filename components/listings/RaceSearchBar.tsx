@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, TextInput, Text, ActivityIndicator, TouchableOpacity, FlatList, StyleSheet } from 'react-native';
+import { View, TextInput, Text, ActivityIndicator, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
 import { Colors, Spacing, BorderRadius, FontSize, Shadow } from '../../constants/theme';
 import { formatRaceDate } from '../../lib/utils';
 import type { RaceOption } from '../../types/app.types';
@@ -46,14 +46,15 @@ export function RaceSearchBar({
       {searchUnavailable && (
         <Text style={styles.warning}>Live race search unavailable — showing cached results.</Text>
       )}
+      {!loading && query.length > 1 && results.length === 0 && (
+        <Text style={styles.noResults}>No races found for "{query}"</Text>
+      )}
 
       {results.length > 0 && (
-        <View style={styles.dropdown}>
-          <FlatList
-            data={results}
-            keyExtractor={(r) => r.id}
-            scrollEnabled={false}
-            renderItem={({ item }) => (
+        <ScrollView style={styles.dropdown} keyboardShouldPersistTaps="handled" nestedScrollEnabled>
+          {results.map((item, index) => (
+            <React.Fragment key={item.id}>
+              {index > 0 && <View style={styles.separator} />}
               <TouchableOpacity style={styles.resultItem} onPress={() => onSelect(item)} activeOpacity={0.75}>
                 <Text style={styles.raceName}>{item.name}</Text>
                 <View style={styles.resultMeta}>
@@ -66,10 +67,9 @@ export function RaceSearchBar({
                   <Text style={styles.distances}>{item.distances_json.join(' · ')}</Text>
                 )}
               </TouchableOpacity>
-            )}
-            ItemSeparatorComponent={() => <View style={styles.separator} />}
-          />
-        </View>
+            </React.Fragment>
+          ))}
+        </ScrollView>
       )}
     </View>
   );
@@ -105,4 +105,5 @@ const styles = StyleSheet.create({
   metaText: { fontSize: FontSize.sm, color: Colors.textSecondary },
   distances: { fontSize: FontSize.xs, color: Colors.textMuted },
   separator: { height: 1, backgroundColor: Colors.border },
+  noResults: { fontSize: FontSize.sm, color: Colors.textSecondary, textAlign: 'center', paddingVertical: Spacing.md },
 });
