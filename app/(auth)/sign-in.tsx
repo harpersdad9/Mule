@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, ScrollView, Alert, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, SafeAreaView, ScrollView, TouchableOpacity } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
@@ -12,13 +12,15 @@ export default function SignInScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [formError, setFormError] = useState('');
 
   async function handleSignIn() {
     if (!email || !password) return;
+    setFormError('');
     setLoading(true);
     const { error } = await signIn(email.trim().toLowerCase(), password);
     setLoading(false);
-    if (error) Alert.alert('Sign In Failed', error.message);
+    if (error) setFormError(error.message);
   }
 
   return (
@@ -28,6 +30,7 @@ export default function SignInScreen() {
         <Text style={styles.subtitle}>Sign in to your Mule account</Text>
 
         <View style={styles.form}>
+          {formError ? <Text style={styles.errorBanner}>{formError}</Text> : null}
           <Input
             label="Email"
             value={email}
@@ -69,6 +72,7 @@ const styles = StyleSheet.create({
   subtitle: { fontSize: FontSize.md, color: Colors.textSecondary, marginTop: -Spacing.sm },
   form: { gap: Spacing.md },
   forgotRow: { alignSelf: 'flex-end', marginTop: -Spacing.sm },
+  errorBanner: { color: Colors.error, fontSize: FontSize.sm, textAlign: 'center', padding: Spacing.sm, backgroundColor: '#fee2e2', borderRadius: 8 },
   footer: { flexDirection: 'row', justifyContent: 'center', gap: Spacing.sm },
   footerText: { fontSize: FontSize.sm, color: Colors.textSecondary },
   link: { fontSize: FontSize.sm, color: Colors.primary, fontWeight: FontWeight.semibold },

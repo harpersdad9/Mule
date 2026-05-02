@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, ScrollView, Alert, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, SafeAreaView, ScrollView, TouchableOpacity } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
@@ -14,6 +14,8 @@ export default function SignUpScreen() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<{ email?: string; password?: string; confirm?: string }>({});
+  const [formError, setFormError] = useState('');
+  const [success, setSuccess] = useState(false);
 
   function validate(): boolean {
     const e: typeof errors = {};
@@ -26,12 +28,31 @@ export default function SignUpScreen() {
 
   async function handleSignUp() {
     if (!validate()) return;
+    setFormError('');
     setLoading(true);
     const { error } = await signUp(email.trim().toLowerCase(), password);
     setLoading(false);
     if (error) {
-      Alert.alert('Sign Up Failed', error.message);
+      setFormError(error.message);
+    } else {
+      setSuccess(true);
     }
+  }
+
+  if (success) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <View style={styles.successContainer}>
+          <Text style={styles.successTitle}>Check your email</Text>
+          <Text style={styles.successText}>
+            We sent a verification link to {email}. Click it to activate your account, then come back and sign in.
+          </Text>
+          <Button onPress={() => router.replace('/(auth)/sign-in')} fullWidth size="lg">
+            Go to Sign In
+          </Button>
+        </View>
+      </SafeAreaView>
+    );
   }
 
   return (
@@ -41,6 +62,7 @@ export default function SignUpScreen() {
         <Text style={styles.subtitle}>Join the ultra running community</Text>
 
         <View style={styles.form}>
+          {formError ? <Text style={styles.errorBanner}>{formError}</Text> : null}
           <Input
             label="Email"
             value={email}
@@ -88,7 +110,11 @@ const styles = StyleSheet.create({
   subtitle: { fontSize: FontSize.md, color: Colors.textSecondary, marginTop: -Spacing.sm },
   form: { gap: Spacing.md },
   cta: { marginTop: Spacing.sm },
+  errorBanner: { color: Colors.error, fontSize: FontSize.sm, textAlign: 'center', padding: Spacing.sm, backgroundColor: '#fee2e2', borderRadius: 8 },
   footer: { flexDirection: 'row', justifyContent: 'center', gap: Spacing.sm },
   footerText: { fontSize: FontSize.sm, color: Colors.textSecondary },
   link: { fontSize: FontSize.sm, color: Colors.primary, fontWeight: FontWeight.semibold },
+  successContainer: { flex: 1, padding: Spacing.xl, justifyContent: 'center', gap: Spacing.lg },
+  successTitle: { fontSize: FontSize.xxxl, fontWeight: FontWeight.bold, color: Colors.text },
+  successText: { fontSize: FontSize.md, color: Colors.textSecondary, lineHeight: 24 },
 });
