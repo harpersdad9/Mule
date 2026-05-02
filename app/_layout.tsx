@@ -17,7 +17,7 @@ function RootNavigator() {
 
     if (!session && !inAuthGroup) {
       router.replace('/(auth)/welcome');
-    } else if (session && !profile?.onboarding_done && !inOnboarding && !inAuthGroup) {
+    } else if (session && !profile?.onboarding_done && !inOnboarding) {
       router.replace('/(onboarding)/roles');
     } else if (session && profile?.onboarding_done && (inAuthGroup || inOnboarding)) {
       router.replace('/(tabs)/search');
