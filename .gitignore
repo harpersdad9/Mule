@@ -42,3 +42,6 @@ supabase/.temp/
 
 # Claude Code local config
 .claude/
+
+# MCP config contains auth tokens — keep local only
+.mcp.json
