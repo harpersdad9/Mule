@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, StyleSheet, SafeAreaView, TouchableOpacity } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Button } from '../../components/ui/Button';
 import { useAuth } from '../../lib/auth';
@@ -24,6 +24,7 @@ export default function RolesScreen() {
   const { user, refreshProfile } = useAuth();
   const [selected, setSelected] = useState<Set<'runner' | 'pacer' | 'crew'>>(new Set(['runner']));
   const [loading, setLoading] = useState(false);
+  const [formError, setFormError] = useState('');
 
   function toggleRole(role: 'runner' | 'pacer' | 'crew') {
     setSelected((prev) => {
@@ -48,7 +49,7 @@ export default function RolesScreen() {
       is_crew: selected.has('crew'),
     }).eq('id', user.id);
     setLoading(false);
-    if (error) { Alert.alert('Error', error.message); return; }
+    if (error) { setFormError(error.message); return; }
     await refreshProfile();
     router.push('/(onboarding)/strava-connect');
   }
@@ -59,6 +60,7 @@ export default function RolesScreen() {
         <Text style={styles.title}>What's your role?</Text>
         <Text style={styles.subtitle}>You can hold multiple roles — select all that apply.</Text>
 
+        {formError ? <Text style={styles.errorBanner}>{formError}</Text> : null}
         <View style={styles.roles}>
           {ROLES.map((role) => {
             const active = selected.has(role.id);
@@ -107,6 +109,7 @@ const styles = StyleSheet.create({
     gap: Spacing.md,
   },
   roleCardActive: { borderColor: Colors.primary, backgroundColor: '#FFF5F1' },
+  errorBanner: { color: Colors.error, fontSize: FontSize.sm, textAlign: 'center', padding: Spacing.sm, backgroundColor: '#fee2e2', borderRadius: 8 },
   emoji: { fontSize: 32 },
   roleText: { flex: 1 },
   roleTitle: { fontSize: FontSize.lg, fontWeight: FontWeight.semibold, color: Colors.text },

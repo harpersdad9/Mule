@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, ScrollView, Alert } from 'react-native';
+import { View, Text, StyleSheet, SafeAreaView, ScrollView } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
@@ -18,6 +18,7 @@ export default function BuildProfileScreen() {
   const [state, setState] = useState('');
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<{ fullName?: string; username?: string }>({});
+  const [formError, setFormError] = useState('');
 
   function validate(): boolean {
     const e: typeof errors = {};
@@ -44,7 +45,7 @@ export default function BuildProfileScreen() {
       if (error.code === '23505') {
         setErrors({ username: 'This username is already taken' });
       } else {
-        Alert.alert('Error', error.message);
+        setFormError(error.message);
       }
       return;
     }
@@ -57,6 +58,7 @@ export default function BuildProfileScreen() {
         <Text style={styles.title}>Build your profile</Text>
         <Text style={styles.subtitle}>Help the community get to know you.</Text>
 
+        {formError ? <Text style={styles.errorBanner}>{formError}</Text> : null}
         <View style={styles.form}>
           <Input
             label="Full Name"
@@ -118,4 +120,5 @@ const styles = StyleSheet.create({
   stateRow: { flexDirection: 'row' },
   stateBtn: { marginRight: Spacing.xs },
   bioInput: { height: 80 },
+  errorBanner: { color: Colors.error, fontSize: FontSize.sm, textAlign: 'center', padding: Spacing.sm, backgroundColor: '#fee2e2', borderRadius: 8 },
 });
