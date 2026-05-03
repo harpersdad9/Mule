@@ -1,26 +1,33 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, ScrollView, Alert } from 'react-native';
+import { View, Text, StyleSheet, SafeAreaView, ScrollView, TouchableOpacity } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
 import { useAuth } from '../../../lib/auth';
 import { useProfile } from '../../../hooks/useProfile';
 import { useStravaSync } from '../../../hooks/useStravaSync';
 import { Avatar } from '../../../components/ui/Avatar';
-import { Badge } from '../../../components/ui/Badge';
 import { Button } from '../../../components/ui/Button';
 import { Input } from '../../../components/ui/Input';
 import { StravaStatsBlock } from '../../../components/profiles/StravaStatsBlock';
 import { StarRating } from '../../../components/ui/StarRating';
 import { LoadingSpinner } from '../../../components/ui/LoadingSpinner';
-import { Colors, Spacing, FontSize, FontWeight } from '../../../constants/theme';
+import { Colors, Spacing, FontSize, FontWeight, BorderRadius } from '../../../constants/theme';
+
+const ROLES = [
+  { id: 'runner' as const, label: 'Runner', emoji: '🏃' },
+  { id: 'pacer' as const, label: 'Pacer', emoji: '💨' },
+  { id: 'crew' as const, label: 'Crew', emoji: '🎽' },
+];
 
 export default function ProfileScreen() {
   const router = useRouter();
-  const { user, signOut } = useAuth();
+  const { user, signOut, refreshProfile } = useAuth();
   const { profile, strava, avgRating, reviewCount, loading, updateProfile } = useProfile(user?.id);
   const { sync, syncing } = useStravaSync();
   const [editing, setEditing] = useState(false);
   const [bio, setBio] = useState('');
   const [saving, setSaving] = useState(false);
+  const [rolesSaving, setRolesSaving] = useState(false);
+  const [formError, setFormError] = useState('');
 
   function startEdit() {
     setBio(profile?.bio ?? '');
@@ -31,13 +38,27 @@ export default function ProfileScreen() {
     setSaving(true);
     const { error } = await updateProfile({ bio: bio.trim() || null });
     setSaving(false);
-    if (error) Alert.alert('Error', error);
+    if (error) setFormError(error);
     else setEditing(false);
+  }
+
+  async function toggleRole(role: 'runner' | 'pacer' | 'crew') {
+    if (!profile) return;
+    const key = `is_${role}` as 'is_runner' | 'is_pacer' | 'is_crew';
+    const currentVal = profile[key];
+    const activeCount = [profile.is_runner, profile.is_pacer, profile.is_crew].filter(Boolean).length;
+    if (currentVal && activeCount === 1) return;
+    setRolesSaving(true);
+    setFormError('');
+    const { error } = await updateProfile({ [key]: !currentVal });
+    if (!error) await refreshProfile();
+    else setFormError(error);
+    setRolesSaving(false);
   }
 
   async function handleStravaSync() {
     const { success } = await sync();
-    if (!success) Alert.alert('Sync failed', 'Could not sync Strava stats. Please try again.');
+    if (!success) setFormError('Could not sync Strava stats. Please try again.');
   }
 
   if (loading) return <LoadingSpinner fullScreen />;
@@ -71,10 +92,26 @@ export default function ProfileScreen() {
           </View>
         </View>
 
-        <View style={styles.roles}>
-          {profile.is_runner && <Badge label="Runner" variant="default" />}
-          {profile.is_pacer && <Badge label="Pacer" variant="pacer" />}
-          {profile.is_crew && <Badge label="Crew" variant="crew" />}
+        <View>
+          <Text style={styles.sectionLabel}>My Roles</Text>
+          <View style={styles.rolesRow}>
+            {ROLES.map((role) => {
+              const active = !!profile[`is_${role.id}` as 'is_runner' | 'is_pacer' | 'is_crew'];
+              return (
+                <TouchableOpacity
+                  key={role.id}
+                  style={[styles.roleChip, active && styles.roleChipActive]}
+                  onPress={() => toggleRole(role.id)}
+                  disabled={rolesSaving}
+                  activeOpacity={0.75}
+                >
+                  <Text style={styles.roleEmoji}>{role.emoji}</Text>
+                  <Text style={[styles.roleLabel, active && styles.roleLabelActive]}>{role.label}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+          {formError ? <Text style={styles.errorText}>{formError}</Text> : null}
         </View>
 
         {editing ? (
@@ -137,7 +174,25 @@ const styles = StyleSheet.create({
   username: { fontSize: FontSize.md, color: Colors.textSecondary },
   ratingRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginTop: Spacing.xs },
   ratingText: { fontSize: FontSize.sm, color: Colors.textSecondary },
-  roles: { flexDirection: 'row', gap: Spacing.sm },
+  sectionLabel: { fontSize: FontSize.xs, fontWeight: '600', color: Colors.textSecondary, textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: Spacing.sm },
+  rolesRow: { flexDirection: 'row', gap: Spacing.sm },
+  roleChip: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.xs,
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+  },
+  roleChipActive: { borderColor: Colors.primary, backgroundColor: '#FFF5F1' },
+  roleEmoji: { fontSize: 16 },
+  roleLabel: { fontSize: FontSize.sm, fontWeight: '600', color: Colors.textSecondary },
+  roleLabelActive: { color: Colors.primary },
+  errorText: { fontSize: FontSize.xs, color: Colors.error, marginTop: Spacing.xs },
   bio: { fontSize: FontSize.md, color: Colors.text, lineHeight: 24 },
   editBioBtn: { alignSelf: 'flex-start', marginTop: Spacing.xs },
   editBio: { gap: Spacing.md },
