@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, SafeAreaView, ScrollView, TouchableOpacity } from 'react-native';
-import { useLocalSearchParams, Stack } from 'expo-router';
+import { useLocalSearchParams, Stack, useRouter } from 'expo-router';
 import { useRaceListings } from '../../../hooks/useListings';
 import { ProfileCard } from '../../../components/profiles/ProfileCard';
 import { ListingCard } from '../../../components/listings/ListingCard';
@@ -11,6 +11,7 @@ import type { RoleType } from '../../../types/app.types';
 
 export default function RaceDetailScreen() {
   const { raceId } = useLocalSearchParams<{ raceId: string }>();
+  const router = useRouter();
   const [filter, setFilter] = useState<RoleType | undefined>(undefined);
   const { listings, loading } = useRaceListings(raceId, filter);
 
@@ -46,7 +47,7 @@ export default function RaceDetailScreen() {
               <ListingCard
                 key={listing.id}
                 listing={listing}
-                onPress={() => {}}
+                onPress={() => router.push(`/(tabs)/search/listing/${listing.id}`)}
               />
             ))}
           </ScrollView>
