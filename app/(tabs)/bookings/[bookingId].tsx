@@ -1,9 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, ScrollView, TextInput, TouchableOpacity, KeyboardAvoidingView, Platform } from 'react-native';
+import {
+  View, Text, StyleSheet, SafeAreaView, ScrollView, TextInput,
+  TouchableOpacity, KeyboardAvoidingView, Platform,
+} from 'react-native';
 import { useLocalSearchParams, Stack, useRouter } from 'expo-router';
 import { useBookingDetail } from '../../../hooks/useBookings';
 import { useAuth } from '../../../lib/auth';
 import { supabase } from '../../../lib/supabase';
+import { openGoogleAuth, exchangeGoogleToken, isGoogleConnected, createMeetEvent } from '../../../lib/google';
 import { BookingStatusBadge } from '../../../components/bookings/BookingStatusBadge';
 import { Button } from '../../../components/ui/Button';
 import { LoadingSpinner } from '../../../components/ui/LoadingSpinner';
@@ -13,11 +17,11 @@ import type { Database } from '../../../types/database.types';
 
 type Message = Database['public']['Tables']['messages']['Row'];
 
-const CALL_PLATFORMS = [
-  { id: 'zoom', label: 'Zoom', icon: '🎥' },
-  { id: 'meet', label: 'Google Meet', icon: '📹' },
-  { id: 'facetime', label: 'FaceTime', icon: '📱' },
-  { id: 'phone', label: 'Phone call', icon: '📞' },
+const DURATIONS = [
+  { label: '30 min', value: 30 },
+  { label: '1 hr', value: 60 },
+  { label: '90 min', value: 90 },
+  { label: '2 hr', value: 120 },
 ];
 
 export default function BookingDetailScreen() {
@@ -28,11 +32,20 @@ export default function BookingDetailScreen() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [sending, setSending] = useState(false);
-  const [showCallPanel, setShowCallPanel] = useState(false);
-  const [callPlatform, setCallPlatform] = useState('zoom');
-  const [callLink, setCallLink] = useState('');
-  const [callTime, setCallTime] = useState('');
   const scrollRef = useRef<ScrollView>(null);
+
+  // Call panel state
+  const [showCallPanel, setShowCallPanel] = useState(false);
+  const [callType, setCallType] = useState<'meet' | 'phone'>('meet');
+  const [googleConnected, setGoogleConnected] = useState(false);
+  const [connectingGoogle, setConnectingGoogle] = useState(false);
+  const [googleError, setGoogleError] = useState('');
+  const [meetDate, setMeetDate] = useState('');
+  const [meetTime, setMeetTime] = useState('');
+  const [meetDuration, setMeetDuration] = useState(60);
+  const [creatingMeet, setCreatingMeet] = useState(false);
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [phoneTime, setPhoneTime] = useState('');
 
   useEffect(() => {
     if (!bookingId) return;
@@ -40,7 +53,10 @@ export default function BookingDetailScreen() {
 
     const channel = supabase
       .channel(`booking-messages-${bookingId}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `booking_id=eq.${bookingId}` }, (payload) => {
+      .on('postgres_changes', {
+        event: 'INSERT', schema: 'public', table: 'messages',
+        filter: `booking_id=eq.${bookingId}`,
+      }, (payload) => {
         setMessages((prev) => [...prev, payload.new as Message]);
         setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
       })
@@ -68,15 +84,76 @@ export default function BookingDetailScreen() {
     setSending(false);
   }
 
-  function sendCallInvite() {
-    const platform = CALL_PLATFORMS.find((p) => p.id === callPlatform);
-    const parts = [`${platform?.icon} ${platform?.label} call request`];
-    if (callTime.trim()) parts.push(`Suggested time: ${callTime.trim()}`);
-    if (callLink.trim()) parts.push(`Link: ${callLink.trim()}`);
+  async function openCallPanel() {
+    setShowCallPanel(true);
+    setGoogleError('');
+    const connected = await isGoogleConnected();
+    setGoogleConnected(connected);
+  }
+
+  async function handleConnectGoogle() {
+    setConnectingGoogle(true);
+    setGoogleError('');
+    const result = await openGoogleAuth();
+    if ('error' in result) {
+      setGoogleError(result.error);
+      setConnectingGoogle(false);
+      return;
+    }
+    const { error } = await exchangeGoogleToken(result.code, result.redirectUri);
+    if (error) {
+      setGoogleError(error);
+    } else {
+      setGoogleConnected(true);
+    }
+    setConnectingGoogle(false);
+  }
+
+  async function handleCreateMeeting() {
+    if (!meetDate || !meetTime) return;
+    setCreatingMeet(true);
+    setGoogleError('');
+
+    const startTime = new Date(`${meetDate}T${meetTime}:00`).toISOString();
+    const title = `${capitalize(booking?.agreed_role_type ?? 'Call')} — Mule`;
+
+    const { meetLink, calendarLink, error } = await createMeetEvent({
+      title,
+      startTime,
+      durationMinutes: meetDuration,
+      description: `Booking chat for your upcoming race.`,
+    });
+
+    if (error) {
+      setGoogleError(error);
+      setCreatingMeet(false);
+      return;
+    }
+
+    const parts = [`📹 Google Meet call`];
+    const dateLabel = new Date(`${meetDate}T${meetTime}:00`).toLocaleString([], {
+      weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+    });
+    parts.push(`🗓 ${dateLabel} · ${DURATIONS.find((d) => d.value === meetDuration)?.label}`);
+    if (meetLink) parts.push(`Join: ${meetLink}`);
+    if (calendarLink) parts.push(`Calendar: ${calendarLink}`);
+
     sendMessage(parts.join('\n'));
     setShowCallPanel(false);
-    setCallLink('');
-    setCallTime('');
+    setMeetDate('');
+    setMeetTime('');
+    setCreatingMeet(false);
+  }
+
+  function handleSendPhoneCall() {
+    if (!phoneTime.trim() && !phoneNumber.trim()) return;
+    const parts = ['📞 Phone call request'];
+    if (phoneTime.trim()) parts.push(`Suggested time: ${phoneTime.trim()}`);
+    if (phoneNumber.trim()) parts.push(`Call/text: ${phoneNumber.trim()}`);
+    sendMessage(parts.join('\n'));
+    setShowCallPanel(false);
+    setPhoneNumber('');
+    setPhoneTime('');
   }
 
   if (loading) return <LoadingSpinner fullScreen />;
@@ -91,7 +168,11 @@ export default function BookingDetailScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <Stack.Screen options={{ headerShown: true, headerTitle: capitalize(booking.agreed_role_type), headerBackTitle: 'Messages' }} />
+      <Stack.Screen options={{
+        headerShown: true,
+        headerTitle: capitalize(booking.agreed_role_type),
+        headerBackTitle: 'Messages',
+      }} />
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
 
         {/* Summary bar */}
@@ -115,7 +196,7 @@ export default function BookingDetailScreen() {
           )}
           {messages.map((msg) => {
             const mine = msg.sender_id === user?.id;
-            const isCallMsg = msg.body.startsWith('🎥') || msg.body.startsWith('📹') || msg.body.startsWith('📱') || msg.body.startsWith('📞');
+            const isCallMsg = msg.body.startsWith('📹') || msg.body.startsWith('📞');
             return (
               <View key={msg.id} style={[styles.bubbleWrap, mine ? styles.bubbleWrapMine : styles.bubbleWrapTheirs]}>
                 <View style={[
@@ -142,47 +223,126 @@ export default function BookingDetailScreen() {
         {/* Schedule Call panel */}
         {showCallPanel && (
           <View style={styles.callPanel}>
-            <Text style={styles.callPanelTitle}>Schedule a Call</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.platformRow}>
-              {CALL_PLATFORMS.map((p) => (
-                <TouchableOpacity
-                  key={p.id}
-                  style={[styles.platformChip, callPlatform === p.id && styles.platformChipActive]}
-                  onPress={() => setCallPlatform(p.id)}
-                >
-                  <Text style={styles.platformIcon}>{p.icon}</Text>
-                  <Text style={[styles.platformLabel, callPlatform === p.id && styles.platformLabelActive]}>{p.label}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-            <TextInput
-              style={styles.callInput}
-              value={callTime}
-              onChangeText={setCallTime}
-              placeholder="Suggested time (e.g. Sat June 14 at 2pm PT)"
-              placeholderTextColor={Colors.textMuted}
-            />
-            <TextInput
-              style={styles.callInput}
-              value={callLink}
-              onChangeText={setCallLink}
-              placeholder="Meeting link (optional)"
-              placeholderTextColor={Colors.textMuted}
-              autoCapitalize="none"
-            />
-            <View style={styles.callActions}>
-              <Button onPress={() => setShowCallPanel(false)} variant="outline" style={styles.callBtn}>Cancel</Button>
-              <Button onPress={sendCallInvite} style={styles.callBtn} disabled={!callTime.trim() && !callLink.trim()}>
-                Send Invite
-              </Button>
+            <View style={styles.callPanelHeader}>
+              <Text style={styles.callPanelTitle}>Schedule a Call</Text>
+              <TouchableOpacity onPress={() => setShowCallPanel(false)}>
+                <Text style={styles.callPanelClose}>✕</Text>
+              </TouchableOpacity>
             </View>
+
+            {/* Type tabs */}
+            <View style={styles.callTypeTabs}>
+              <TouchableOpacity
+                style={[styles.callTypeTab, callType === 'meet' && styles.callTypeTabActive]}
+                onPress={() => { setCallType('meet'); setGoogleError(''); }}
+              >
+                <Text style={[styles.callTypeTabText, callType === 'meet' && styles.callTypeTabTextActive]}>
+                  📹 Google Meet
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.callTypeTab, callType === 'phone' && styles.callTypeTabActive]}
+                onPress={() => { setCallType('phone'); setGoogleError(''); }}
+              >
+                <Text style={[styles.callTypeTabText, callType === 'phone' && styles.callTypeTabTextActive]}>
+                  📞 Phone Call
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {googleError ? <Text style={styles.callError}>{googleError}</Text> : null}
+
+            {callType === 'meet' ? (
+              googleConnected ? (
+                <View style={styles.meetForm}>
+                  <Text style={styles.callFieldLabel}>Date</Text>
+                  <TextInput
+                    style={styles.callInput}
+                    value={meetDate}
+                    onChangeText={setMeetDate}
+                    placeholder="YYYY-MM-DD (e.g. 2026-06-14)"
+                    placeholderTextColor={Colors.textMuted}
+                    autoCapitalize="none"
+                    keyboardType="numbers-and-punctuation"
+                  />
+                  <Text style={styles.callFieldLabel}>Time</Text>
+                  <TextInput
+                    style={styles.callInput}
+                    value={meetTime}
+                    onChangeText={setMeetTime}
+                    placeholder="HH:MM (24-hour, e.g. 14:00)"
+                    placeholderTextColor={Colors.textMuted}
+                    autoCapitalize="none"
+                    keyboardType="numbers-and-punctuation"
+                  />
+                  <Text style={styles.callFieldLabel}>Duration</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.durationRow}>
+                    {DURATIONS.map((d) => (
+                      <TouchableOpacity
+                        key={d.value}
+                        style={[styles.durationChip, meetDuration === d.value && styles.durationChipActive]}
+                        onPress={() => setMeetDuration(d.value)}
+                      >
+                        <Text style={[styles.durationText, meetDuration === d.value && styles.durationTextActive]}>
+                          {d.label}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                  <Button
+                    onPress={handleCreateMeeting}
+                    loading={creatingMeet}
+                    disabled={!meetDate.trim() || !meetTime.trim()}
+                    fullWidth
+                  >
+                    Create Meeting & Send Link
+                  </Button>
+                </View>
+              ) : (
+                <View style={styles.connectPrompt}>
+                  <Text style={styles.connectText}>
+                    Connect Google Calendar to create a Meet link and add the event to your calendar automatically.
+                  </Text>
+                  <Button onPress={handleConnectGoogle} loading={connectingGoogle} fullWidth>
+                    Connect Google Calendar
+                  </Button>
+                </View>
+              )
+            ) : (
+              <View style={styles.phoneForm}>
+                <Text style={styles.callFieldLabel}>Your phone number</Text>
+                <TextInput
+                  style={styles.callInput}
+                  value={phoneNumber}
+                  onChangeText={setPhoneNumber}
+                  placeholder="e.g. (555) 867-5309"
+                  placeholderTextColor={Colors.textMuted}
+                  keyboardType="phone-pad"
+                />
+                <Text style={styles.callFieldLabel}>Suggested time</Text>
+                <TextInput
+                  style={styles.callInput}
+                  value={phoneTime}
+                  onChangeText={setPhoneTime}
+                  placeholder="e.g. Sat June 14 at 2pm PT"
+                  placeholderTextColor={Colors.textMuted}
+                />
+                <Button
+                  onPress={handleSendPhoneCall}
+                  disabled={!phoneNumber.trim() && !phoneTime.trim()}
+                  fullWidth
+                >
+                  Send Phone Call Request
+                </Button>
+              </View>
+            )}
           </View>
         )}
 
         {/* Input bar */}
         <View style={styles.inputBar}>
           <TouchableOpacity
-            onPress={() => setShowCallPanel((v) => !v)}
+            onPress={() => showCallPanel ? setShowCallPanel(false) : openCallPanel()}
             style={[styles.callToggle, showCallPanel && styles.callToggleActive]}
           >
             <Text style={styles.callToggleIcon}>📞</Text>
@@ -243,29 +403,30 @@ const styles = StyleSheet.create({
   // Call panel
   callPanel: {
     padding: Spacing.lg,
-    gap: Spacing.sm,
+    gap: Spacing.md,
     backgroundColor: Colors.surface,
     borderTopWidth: 1,
     borderTopColor: Colors.border,
+    maxHeight: 420,
   },
+  callPanelHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   callPanelTitle: { fontSize: FontSize.md, fontWeight: FontWeight.semibold, color: Colors.text },
-  platformRow: { flexDirection: 'row' },
-  platformChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingVertical: 6,
-    paddingHorizontal: Spacing.sm,
-    borderRadius: 20,
+  callPanelClose: { fontSize: FontSize.md, color: Colors.textMuted, paddingHorizontal: Spacing.sm },
+  callTypeTabs: { flexDirection: 'row', gap: Spacing.sm },
+  callTypeTab: {
+    flex: 1,
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.md,
     borderWidth: 1.5,
     borderColor: Colors.border,
-    marginRight: Spacing.xs,
+    alignItems: 'center',
     backgroundColor: Colors.background,
   },
-  platformChipActive: { borderColor: Colors.primary, backgroundColor: '#FFF5F1' },
-  platformIcon: { fontSize: 16 },
-  platformLabel: { fontSize: FontSize.sm, color: Colors.textSecondary, fontWeight: '500' },
-  platformLabelActive: { color: Colors.primary, fontWeight: '600' },
+  callTypeTabActive: { borderColor: Colors.primary, backgroundColor: '#FFF5F1' },
+  callTypeTabText: { fontSize: FontSize.sm, fontWeight: '500', color: Colors.textSecondary },
+  callTypeTabTextActive: { color: Colors.primary, fontWeight: '600' },
+  callError: { fontSize: FontSize.sm, color: Colors.error, backgroundColor: '#fee2e2', padding: Spacing.sm, borderRadius: BorderRadius.sm },
+  callFieldLabel: { fontSize: FontSize.xs, fontWeight: '600', color: Colors.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5 },
   callInput: {
     borderWidth: 1,
     borderColor: Colors.border,
@@ -275,8 +436,23 @@ const styles = StyleSheet.create({
     color: Colors.text,
     backgroundColor: Colors.background,
   },
-  callActions: { flexDirection: 'row', gap: Spacing.md, marginTop: Spacing.xs },
-  callBtn: { flex: 1 },
+  meetForm: { gap: Spacing.sm },
+  durationRow: { flexDirection: 'row', marginBottom: Spacing.xs },
+  durationChip: {
+    paddingVertical: 6,
+    paddingHorizontal: Spacing.md,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+    marginRight: Spacing.xs,
+    backgroundColor: Colors.background,
+  },
+  durationChipActive: { borderColor: Colors.primary, backgroundColor: '#FFF5F1' },
+  durationText: { fontSize: FontSize.sm, color: Colors.textSecondary, fontWeight: '500' },
+  durationTextActive: { color: Colors.primary, fontWeight: '600' },
+  connectPrompt: { gap: Spacing.md },
+  connectText: { fontSize: FontSize.sm, color: Colors.textSecondary, lineHeight: 20 },
+  phoneForm: { gap: Spacing.sm },
   // Input bar
   inputBar: {
     flexDirection: 'row',

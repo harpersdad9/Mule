@@ -7,6 +7,7 @@ export const Config = {
   supabaseAnonKey: (process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? extra.supabaseAnonKey ?? '') as string,
   stripePublishableKey: (process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? extra.stripePublishableKey ?? '') as string,
   stravaClientId: (process.env.EXPO_PUBLIC_STRAVA_CLIENT_ID ?? extra.stravaClientId ?? '') as string,
+  googleClientId: (process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID ?? extra.googleClientId ?? '') as string,
   platformFeePercent: 0.05,
   reviewTimeoutDays: 14,
   ultrasignupSearchEndpoint: 'https://ultrasignup.com/service/events.svc/json',
