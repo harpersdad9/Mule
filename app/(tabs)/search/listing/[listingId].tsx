@@ -11,7 +11,7 @@ import { LoadingSpinner } from '../../../../components/ui/LoadingSpinner';
 import { Colors, Spacing, FontSize, FontWeight, BorderRadius } from '../../../../constants/theme';
 import { formatCurrency, formatRaceDate, capitalize } from '../../../../lib/utils';
 
-interface ListingWithDetails {
+interface ListingDetail {
   id: string;
   title: string;
   description: string | null;
@@ -30,12 +30,14 @@ interface ListingWithDetails {
 
 export default function PublicListingScreen() {
   const { listingId } = useLocalSearchParams<{ listingId: string }>();
-  const { user, profile } = useAuth();
+  const { user } = useAuth();
   const router = useRouter();
   const { createBooking } = useBookings(user?.id);
-  const [listing, setListing] = useState<ListingWithDetails | null>(null);
+  const [listing, setListing] = useState<ListingDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [requesting, setRequesting] = useState(false);
+  const [requested, setRequested] = useState(false);
+  const [bookingId, setBookingId] = useState<string | null>(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -66,15 +68,18 @@ export default function PublicListingScreen() {
       status: 'pending',
     });
     setRequesting(false);
-    if (err) { setError(err); return; }
-    router.replace(`/(tabs)/bookings/${data?.id}`);
+    if (err) {
+      setError(err);
+      return;
+    }
+    setBookingId(data?.id ?? null);
+    setRequested(true);
   }
 
   if (loading) return <LoadingSpinner fullScreen />;
-  if (!listing) return null;
+  if (!listing) return <View style={styles.safe}><Text style={styles.errorBanner}>{error || 'Listing not found.'}</Text></View>;
 
   const isOwner = listing.user_id === user?.id;
-  const isRunner = profile?.is_runner;
   const rate = listing.rate_type === 'flat'
     ? `${formatCurrency(listing.rate_amount)} flat fee`
     : `${formatCurrency(listing.rate_amount)} / hr`;
@@ -85,7 +90,7 @@ export default function PublicListingScreen() {
       <Stack.Screen options={{ headerShown: true, headerTitle: capitalize(listing.role_type), headerBackTitle: 'Results' }} />
       <ScrollView contentContainerStyle={styles.container}>
 
-        {/* Provider info */}
+        {/* Provider */}
         <View style={styles.providerCard}>
           <Avatar uri={listing.profile.avatar_url} name={listing.profile.full_name} size={56} />
           <View style={styles.providerInfo}>
@@ -101,50 +106,67 @@ export default function PublicListingScreen() {
           <Text style={styles.raceMeta}>{location} · {formatRaceDate(listing.race.race_date)}</Text>
         </View>
 
-        {/* Listing details */}
+        {/* Listing */}
         <Text style={styles.title}>{listing.title}</Text>
         <Text style={styles.rate}>{rate}</Text>
 
-        {listing.segment_start && (
+        {listing.segment_start ? (
           <View style={styles.segmentRow}>
-            <Text style={styles.segmentLabel}>Segment</Text>
-            <Text style={styles.segmentValue}>
+            <Text style={styles.metaLabel}>Segment</Text>
+            <Text style={styles.metaValue}>
               {listing.segment_start}{listing.segment_end ? ` → ${listing.segment_end}` : ''}
               {listing.segment_miles ? ` (${listing.segment_miles} mi)` : ''}
             </Text>
           </View>
-        )}
+        ) : null}
 
         {listing.description ? (
           <View>
-            <Text style={styles.descLabel}>About</Text>
+            <Text style={styles.metaLabel}>Details</Text>
             <Text style={styles.description}>{listing.description}</Text>
           </View>
         ) : null}
 
         {listing.profile.bio ? (
           <View>
-            <Text style={styles.descLabel}>About {listing.profile.full_name.split(' ')[0]}</Text>
+            <Text style={styles.metaLabel}>About {listing.profile.full_name.split(' ')[0]}</Text>
             <Text style={styles.description}>{listing.profile.bio}</Text>
           </View>
         ) : null}
 
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+        {error ? <Text style={styles.errorBanner}>{error}</Text> : null}
 
+        {/* Actions */}
         {isOwner ? (
           <Button onPress={() => router.push(`/(tabs)/listings/${listing.id}`)} variant="outline" fullWidth>
             Manage Listing
           </Button>
-        ) : isRunner ? (
-          <Button onPress={handleRequest} loading={requesting} fullWidth size="lg">
-            Request Booking
-          </Button>
-        ) : (
-          <View style={styles.noticeBox}>
-            <Text style={styles.noticeText}>Add the Runner role on your profile to book pacers and crew.</Text>
-            <Button onPress={() => router.push('/(tabs)/profile')} variant="outline" size="sm" style={styles.noticeBtn}>
-              Update Profile
+        ) : requested ? (
+          <View style={styles.successBox}>
+            <Text style={styles.successTitle}>Request Sent!</Text>
+            <Text style={styles.successText}>
+              Your booking request has been sent to {listing.profile.full_name.split(' ')[0]}. You'll be notified when they respond.
+            </Text>
+            {bookingId ? (
+              <Button onPress={() => router.replace(`/(tabs)/bookings/${bookingId}`)} fullWidth style={styles.successBtn}>
+                View Booking & Message
+              </Button>
+            ) : null}
+            <Button onPress={() => router.replace('/(tabs)/bookings')} variant="outline" fullWidth>
+              View All Bookings
             </Button>
+          </View>
+        ) : (
+          <View style={styles.bookingBox}>
+            <View style={styles.bookingSummary}>
+              <Text style={styles.bookingSummaryLabel}>You're requesting</Text>
+              <Text style={styles.bookingSummaryValue}>{capitalize(listing.role_type)} · {rate}</Text>
+              <Text style={styles.bookingSummaryRace}>{listing.race.name}</Text>
+            </View>
+            <Button onPress={handleRequest} loading={requesting} fullWidth size="lg">
+              Send Request
+            </Button>
+            <Text style={styles.bookingNote}>No payment yet — the {listing.role_type} reviews and accepts first.</Text>
           </View>
         )}
       </ScrollView>
@@ -179,13 +201,33 @@ const styles = StyleSheet.create({
   raceMeta: { fontSize: FontSize.sm, color: Colors.textSecondary, marginTop: 2 },
   title: { fontSize: FontSize.xxl, fontWeight: FontWeight.bold, color: Colors.text },
   rate: { fontSize: FontSize.xl, fontWeight: FontWeight.semibold, color: Colors.primary },
-  segmentRow: { gap: 4 },
-  segmentLabel: { fontSize: FontSize.xs, fontWeight: '600', color: Colors.textSecondary, textTransform: 'uppercase', letterSpacing: 0.6 },
-  segmentValue: { fontSize: FontSize.md, color: Colors.text },
-  descLabel: { fontSize: FontSize.xs, fontWeight: '600', color: Colors.textSecondary, textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: Spacing.xs },
+  metaLabel: { fontSize: FontSize.xs, fontWeight: '600', color: Colors.textSecondary, textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 4 },
+  metaValue: { fontSize: FontSize.md, color: Colors.text },
+  segmentRow: { gap: 2 },
   description: { fontSize: FontSize.md, color: Colors.text, lineHeight: 24 },
-  errorText: { fontSize: FontSize.sm, color: Colors.error, textAlign: 'center' },
-  noticeBox: { gap: Spacing.sm, padding: Spacing.md, backgroundColor: Colors.surface, borderRadius: BorderRadius.md, borderWidth: 1, borderColor: Colors.border, alignItems: 'center' },
-  noticeText: { fontSize: FontSize.sm, color: Colors.textSecondary, textAlign: 'center', lineHeight: 20 },
-  noticeBtn: { marginTop: Spacing.xs },
+  errorBanner: { color: Colors.error, fontSize: FontSize.sm, backgroundColor: '#fee2e2', padding: Spacing.md, borderRadius: BorderRadius.md, textAlign: 'center' },
+  bookingBox: {
+    gap: Spacing.md,
+    padding: Spacing.lg,
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  bookingSummary: { gap: 4 },
+  bookingSummaryLabel: { fontSize: FontSize.xs, fontWeight: '600', color: Colors.textSecondary, textTransform: 'uppercase', letterSpacing: 0.6 },
+  bookingSummaryValue: { fontSize: FontSize.lg, fontWeight: FontWeight.bold, color: Colors.text },
+  bookingSummaryRace: { fontSize: FontSize.sm, color: Colors.textSecondary },
+  bookingNote: { fontSize: FontSize.xs, color: Colors.textMuted, textAlign: 'center' },
+  successBox: {
+    gap: Spacing.md,
+    padding: Spacing.lg,
+    backgroundColor: '#f0fdf4',
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    borderColor: '#86efac',
+  },
+  successTitle: { fontSize: FontSize.xl, fontWeight: FontWeight.bold, color: '#166534' },
+  successText: { fontSize: FontSize.md, color: '#166534', lineHeight: 22 },
+  successBtn: { marginTop: Spacing.xs },
 });
