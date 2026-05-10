@@ -7,7 +7,6 @@ import { useLocalSearchParams, Stack, useRouter } from 'expo-router';
 import { useBookingDetail } from '../../../hooks/useBookings';
 import { useAuth } from '../../../lib/auth';
 import { supabase } from '../../../lib/supabase';
-import { openGoogleAuth, exchangeGoogleToken, isGoogleConnected, createMeetEvent } from '../../../lib/google';
 import { BookingStatusBadge } from '../../../components/bookings/BookingStatusBadge';
 import { Button } from '../../../components/ui/Button';
 import { LoadingSpinner } from '../../../components/ui/LoadingSpinner';
@@ -17,12 +16,7 @@ import type { Database } from '../../../types/database.types';
 
 type Message = Database['public']['Tables']['messages']['Row'];
 
-const DURATIONS = [
-  { label: '30 min', value: 30 },
-  { label: '1 hr', value: 60 },
-  { label: '90 min', value: 90 },
-  { label: '2 hr', value: 120 },
-];
+const QUICK_EMOJIS = ['👍', '✅', '💪', '🔥', '🙏', '😊', '🏃', '💨', '🎽', '📍'];
 
 export default function BookingDetailScreen() {
   const { bookingId } = useLocalSearchParams<{ bookingId: string }>();
@@ -33,19 +27,6 @@ export default function BookingDetailScreen() {
   const [newMessage, setNewMessage] = useState('');
   const [sending, setSending] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
-
-  // Call panel state
-  const [showCallPanel, setShowCallPanel] = useState(false);
-  const [callType, setCallType] = useState<'meet' | 'phone'>('meet');
-  const [googleConnected, setGoogleConnected] = useState(false);
-  const [connectingGoogle, setConnectingGoogle] = useState(false);
-  const [googleError, setGoogleError] = useState('');
-  const [meetDate, setMeetDate] = useState('');
-  const [meetTime, setMeetTime] = useState('');
-  const [meetDuration, setMeetDuration] = useState(60);
-  const [creatingMeet, setCreatingMeet] = useState(false);
-  const [phoneNumber, setPhoneNumber] = useState('');
-  const [phoneTime, setPhoneTime] = useState('');
 
   useEffect(() => {
     if (!bookingId) return;
@@ -81,79 +62,11 @@ export default function BookingDetailScreen() {
     setSending(true);
     if (!text) setNewMessage('');
     await supabase.from('messages').insert({ booking_id: bookingId, sender_id: user.id, body } as any);
+    // Fire-and-forget push notification to the other party
+    supabase.functions.invoke('send-message-notification', {
+      body: { bookingId, messageBody: body, senderId: user.id },
+    });
     setSending(false);
-  }
-
-  async function openCallPanel() {
-    setShowCallPanel(true);
-    setGoogleError('');
-    const connected = await isGoogleConnected();
-    setGoogleConnected(connected);
-  }
-
-  async function handleConnectGoogle() {
-    setConnectingGoogle(true);
-    setGoogleError('');
-    const result = await openGoogleAuth();
-    if ('error' in result) {
-      setGoogleError(result.error);
-      setConnectingGoogle(false);
-      return;
-    }
-    const { error } = await exchangeGoogleToken(result.code, result.redirectUri);
-    if (error) {
-      setGoogleError(error);
-    } else {
-      setGoogleConnected(true);
-    }
-    setConnectingGoogle(false);
-  }
-
-  async function handleCreateMeeting() {
-    if (!meetDate || !meetTime) return;
-    setCreatingMeet(true);
-    setGoogleError('');
-
-    const startTime = new Date(`${meetDate}T${meetTime}:00`).toISOString();
-    const title = `${capitalize(booking?.agreed_role_type ?? 'Call')} — Mule`;
-
-    const { meetLink, calendarLink, error } = await createMeetEvent({
-      title,
-      startTime,
-      durationMinutes: meetDuration,
-      description: `Booking chat for your upcoming race.`,
-    });
-
-    if (error) {
-      setGoogleError(error);
-      setCreatingMeet(false);
-      return;
-    }
-
-    const parts = [`📹 Google Meet call`];
-    const dateLabel = new Date(`${meetDate}T${meetTime}:00`).toLocaleString([], {
-      weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
-    });
-    parts.push(`🗓 ${dateLabel} · ${DURATIONS.find((d) => d.value === meetDuration)?.label}`);
-    if (meetLink) parts.push(`Join: ${meetLink}`);
-    if (calendarLink) parts.push(`Calendar: ${calendarLink}`);
-
-    sendMessage(parts.join('\n'));
-    setShowCallPanel(false);
-    setMeetDate('');
-    setMeetTime('');
-    setCreatingMeet(false);
-  }
-
-  function handleSendPhoneCall() {
-    if (!phoneTime.trim() && !phoneNumber.trim()) return;
-    const parts = ['📞 Phone call request'];
-    if (phoneTime.trim()) parts.push(`Suggested time: ${phoneTime.trim()}`);
-    if (phoneNumber.trim()) parts.push(`Call/text: ${phoneNumber.trim()}`);
-    sendMessage(parts.join('\n'));
-    setShowCallPanel(false);
-    setPhoneNumber('');
-    setPhoneTime('');
   }
 
   if (loading) return <LoadingSpinner fullScreen />;
@@ -191,21 +104,17 @@ export default function BookingDetailScreen() {
         >
           {messages.length === 0 && (
             <View style={styles.emptyMessages}>
-              <Text style={styles.emptyMessagesText}>No messages yet. Send a message to get started!</Text>
+              <Text style={styles.emptyEmoji}>💬</Text>
+              <Text style={styles.emptyMessagesText}>No messages yet — say hello!</Text>
             </View>
           )}
           {messages.map((msg) => {
             const mine = msg.sender_id === user?.id;
-            const isCallMsg = msg.body.startsWith('📹') || msg.body.startsWith('📞');
             return (
               <View key={msg.id} style={[styles.bubbleWrap, mine ? styles.bubbleWrapMine : styles.bubbleWrapTheirs]}>
-                <View style={[
-                  styles.bubble,
-                  mine ? styles.bubbleMine : styles.bubbleTheirs,
-                  isCallMsg && styles.bubbleCall,
-                ]}>
-                  <Text style={[styles.bubbleText, mine && !isCallMsg && styles.bubbleTextMine]}>{msg.body}</Text>
-                  <Text style={[styles.bubbleTime, mine && !isCallMsg && styles.bubbleTimeMine]}>
+                <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs]}>
+                  <Text style={[styles.bubbleText, mine && styles.bubbleTextMine]}>{msg.body}</Text>
+                  <Text style={[styles.bubbleTime, mine && styles.bubbleTimeMine]}>
                     {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                   </Text>
                 </View>
@@ -220,133 +129,26 @@ export default function BookingDetailScreen() {
           )}
         </ScrollView>
 
-        {/* Schedule Call panel */}
-        {showCallPanel && (
-          <View style={styles.callPanel}>
-            <View style={styles.callPanelHeader}>
-              <Text style={styles.callPanelTitle}>Schedule a Call</Text>
-              <TouchableOpacity onPress={() => setShowCallPanel(false)}>
-                <Text style={styles.callPanelClose}>✕</Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Type tabs */}
-            <View style={styles.callTypeTabs}>
-              <TouchableOpacity
-                style={[styles.callTypeTab, callType === 'meet' && styles.callTypeTabActive]}
-                onPress={() => { setCallType('meet'); setGoogleError(''); }}
-              >
-                <Text style={[styles.callTypeTabText, callType === 'meet' && styles.callTypeTabTextActive]}>
-                  📹 Google Meet
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.callTypeTab, callType === 'phone' && styles.callTypeTabActive]}
-                onPress={() => { setCallType('phone'); setGoogleError(''); }}
-              >
-                <Text style={[styles.callTypeTabText, callType === 'phone' && styles.callTypeTabTextActive]}>
-                  📞 Phone Call
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            {googleError ? <Text style={styles.callError}>{googleError}</Text> : null}
-
-            {callType === 'meet' ? (
-              googleConnected ? (
-                <View style={styles.meetForm}>
-                  <Text style={styles.callFieldLabel}>Date</Text>
-                  <TextInput
-                    style={styles.callInput}
-                    value={meetDate}
-                    onChangeText={setMeetDate}
-                    placeholder="YYYY-MM-DD (e.g. 2026-06-14)"
-                    placeholderTextColor={Colors.textMuted}
-                    autoCapitalize="none"
-                    keyboardType="numbers-and-punctuation"
-                  />
-                  <Text style={styles.callFieldLabel}>Time</Text>
-                  <TextInput
-                    style={styles.callInput}
-                    value={meetTime}
-                    onChangeText={setMeetTime}
-                    placeholder="HH:MM (24-hour, e.g. 14:00)"
-                    placeholderTextColor={Colors.textMuted}
-                    autoCapitalize="none"
-                    keyboardType="numbers-and-punctuation"
-                  />
-                  <Text style={styles.callFieldLabel}>Duration</Text>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.durationRow}>
-                    {DURATIONS.map((d) => (
-                      <TouchableOpacity
-                        key={d.value}
-                        style={[styles.durationChip, meetDuration === d.value && styles.durationChipActive]}
-                        onPress={() => setMeetDuration(d.value)}
-                      >
-                        <Text style={[styles.durationText, meetDuration === d.value && styles.durationTextActive]}>
-                          {d.label}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </ScrollView>
-                  <Button
-                    onPress={handleCreateMeeting}
-                    loading={creatingMeet}
-                    disabled={!meetDate.trim() || !meetTime.trim()}
-                    fullWidth
-                  >
-                    Create Meeting & Send Link
-                  </Button>
-                </View>
-              ) : (
-                <View style={styles.connectPrompt}>
-                  <Text style={styles.connectText}>
-                    Connect Google Calendar to create a Meet link and add the event to your calendar automatically.
-                  </Text>
-                  <Button onPress={handleConnectGoogle} loading={connectingGoogle} fullWidth>
-                    Connect Google Calendar
-                  </Button>
-                </View>
-              )
-            ) : (
-              <View style={styles.phoneForm}>
-                <Text style={styles.callFieldLabel}>Your phone number</Text>
-                <TextInput
-                  style={styles.callInput}
-                  value={phoneNumber}
-                  onChangeText={setPhoneNumber}
-                  placeholder="e.g. (555) 867-5309"
-                  placeholderTextColor={Colors.textMuted}
-                  keyboardType="phone-pad"
-                />
-                <Text style={styles.callFieldLabel}>Suggested time</Text>
-                <TextInput
-                  style={styles.callInput}
-                  value={phoneTime}
-                  onChangeText={setPhoneTime}
-                  placeholder="e.g. Sat June 14 at 2pm PT"
-                  placeholderTextColor={Colors.textMuted}
-                />
-                <Button
-                  onPress={handleSendPhoneCall}
-                  disabled={!phoneNumber.trim() && !phoneTime.trim()}
-                  fullWidth
-                >
-                  Send Phone Call Request
-                </Button>
-              </View>
-            )}
-          </View>
-        )}
+        {/* Quick emoji bar */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.emojiBar}
+          contentContainerStyle={styles.emojiBarContent}
+        >
+          {QUICK_EMOJIS.map((emoji) => (
+            <TouchableOpacity
+              key={emoji}
+              style={styles.emojiBtn}
+              onPress={() => sendMessage(emoji)}
+            >
+              <Text style={styles.emojiText}>{emoji}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
 
         {/* Input bar */}
         <View style={styles.inputBar}>
-          <TouchableOpacity
-            onPress={() => showCallPanel ? setShowCallPanel(false) : openCallPanel()}
-            style={[styles.callToggle, showCallPanel && styles.callToggleActive]}
-          >
-            <Text style={styles.callToggleIcon}>📞</Text>
-          </TouchableOpacity>
           <TextInput
             style={styles.messageInput}
             value={newMessage}
@@ -359,9 +161,9 @@ export default function BookingDetailScreen() {
           <TouchableOpacity
             onPress={() => sendMessage()}
             disabled={!newMessage.trim() || sending}
-            style={styles.sendBtn}
+            style={[styles.sendBtn, (!newMessage.trim() || sending) && styles.sendBtnDisabled]}
           >
-            <Text style={[styles.sendText, (!newMessage.trim() || sending) && styles.sendDisabled]}>Send</Text>
+            <Text style={styles.sendText}>↑</Text>
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -385,74 +187,44 @@ const styles = StyleSheet.create({
   amount: { fontSize: FontSize.md, fontWeight: FontWeight.bold, color: Colors.primary },
   role: { fontSize: FontSize.sm, color: Colors.textSecondary },
   messageList: { flex: 1 },
-  messageListContent: { padding: Spacing.lg, gap: Spacing.sm, paddingBottom: Spacing.xxl },
-  emptyMessages: { alignItems: 'center', paddingVertical: Spacing.xl },
-  emptyMessagesText: { fontSize: FontSize.sm, color: Colors.textMuted, textAlign: 'center' },
+  messageListContent: { padding: Spacing.lg, gap: Spacing.sm, paddingBottom: Spacing.md },
+  emptyMessages: { alignItems: 'center', paddingVertical: Spacing.xxl, gap: Spacing.sm },
+  emptyEmoji: { fontSize: 48 },
+  emptyMessagesText: { fontSize: FontSize.md, color: Colors.textMuted },
   bubbleWrap: { maxWidth: '80%' },
   bubbleWrapMine: { alignSelf: 'flex-end' },
   bubbleWrapTheirs: { alignSelf: 'flex-start' },
-  bubble: { padding: Spacing.sm + 2, borderRadius: BorderRadius.lg, gap: 2 },
+  bubble: { paddingVertical: Spacing.sm, paddingHorizontal: Spacing.md, borderRadius: 18, gap: 2 },
   bubbleMine: { backgroundColor: Colors.primary, borderBottomRightRadius: 4 },
   bubbleTheirs: { backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border, borderBottomLeftRadius: 4 },
-  bubbleCall: { backgroundColor: '#f0fdf4', borderColor: '#86efac', borderWidth: 1 },
   bubbleText: { fontSize: FontSize.md, color: Colors.text, lineHeight: 20 },
   bubbleTextMine: { color: Colors.white },
   bubbleTime: { fontSize: 10, color: Colors.textMuted, alignSelf: 'flex-end' },
   bubbleTimeMine: { color: 'rgba(255,255,255,0.65)' },
   reviewBtn: { marginTop: Spacing.md },
-  // Call panel
-  callPanel: {
-    padding: Spacing.lg,
-    gap: Spacing.md,
-    backgroundColor: Colors.surface,
+  // Emoji bar
+  emojiBar: {
     borderTopWidth: 1,
     borderTopColor: Colors.border,
-    maxHeight: 420,
+    backgroundColor: Colors.surface,
+    maxHeight: 48,
   },
-  callPanelHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  callPanelTitle: { fontSize: FontSize.md, fontWeight: FontWeight.semibold, color: Colors.text },
-  callPanelClose: { fontSize: FontSize.md, color: Colors.textMuted, paddingHorizontal: Spacing.sm },
-  callTypeTabs: { flexDirection: 'row', gap: Spacing.sm },
-  callTypeTab: {
-    flex: 1,
-    paddingVertical: Spacing.sm,
-    borderRadius: BorderRadius.md,
-    borderWidth: 1.5,
-    borderColor: Colors.border,
-    alignItems: 'center',
-    backgroundColor: Colors.background,
-  },
-  callTypeTabActive: { borderColor: Colors.primary, backgroundColor: '#FFF5F1' },
-  callTypeTabText: { fontSize: FontSize.sm, fontWeight: '500', color: Colors.textSecondary },
-  callTypeTabTextActive: { color: Colors.primary, fontWeight: '600' },
-  callError: { fontSize: FontSize.sm, color: Colors.error, backgroundColor: '#fee2e2', padding: Spacing.sm, borderRadius: BorderRadius.sm },
-  callFieldLabel: { fontSize: FontSize.xs, fontWeight: '600', color: Colors.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5 },
-  callInput: {
-    borderWidth: 1,
-    borderColor: Colors.border,
-    borderRadius: BorderRadius.md,
-    padding: Spacing.sm,
-    fontSize: FontSize.sm,
-    color: Colors.text,
-    backgroundColor: Colors.background,
-  },
-  meetForm: { gap: Spacing.sm },
-  durationRow: { flexDirection: 'row', marginBottom: Spacing.xs },
-  durationChip: {
-    paddingVertical: 6,
+  emojiBarContent: {
     paddingHorizontal: Spacing.md,
-    borderRadius: 20,
-    borderWidth: 1.5,
-    borderColor: Colors.border,
-    marginRight: Spacing.xs,
+    paddingVertical: Spacing.xs,
+    gap: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  emojiBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: Colors.background,
   },
-  durationChipActive: { borderColor: Colors.primary, backgroundColor: '#FFF5F1' },
-  durationText: { fontSize: FontSize.sm, color: Colors.textSecondary, fontWeight: '500' },
-  durationTextActive: { color: Colors.primary, fontWeight: '600' },
-  connectPrompt: { gap: Spacing.md },
-  connectText: { fontSize: FontSize.sm, color: Colors.textSecondary, lineHeight: 20 },
-  phoneForm: { gap: Spacing.sm },
+  emojiText: { fontSize: 20 },
   // Input bar
   inputBar: {
     flexDirection: 'row',
@@ -463,20 +235,26 @@ const styles = StyleSheet.create({
     borderTopColor: Colors.border,
     backgroundColor: Colors.surface,
   },
-  callToggle: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
+  messageInput: {
+    flex: 1,
+    maxHeight: 100,
+    fontSize: FontSize.md,
+    color: Colors.text,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
     backgroundColor: Colors.background,
+    borderRadius: 20,
     borderWidth: 1,
     borderColor: Colors.border,
   },
-  callToggleActive: { backgroundColor: '#FFF5F1', borderColor: Colors.primary },
-  callToggleIcon: { fontSize: 16 },
-  messageInput: { flex: 1, maxHeight: 100, fontSize: FontSize.md, color: Colors.text, padding: Spacing.sm },
-  sendBtn: { paddingVertical: Spacing.sm, paddingHorizontal: Spacing.md },
-  sendText: { fontSize: FontSize.md, fontWeight: FontWeight.semibold, color: Colors.primary },
-  sendDisabled: { color: Colors.textMuted },
+  sendBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: Colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sendBtnDisabled: { backgroundColor: Colors.border },
+  sendText: { fontSize: 18, color: Colors.white, fontWeight: FontWeight.bold, marginTop: -2 },
 });

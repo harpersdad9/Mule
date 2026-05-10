@@ -3,9 +3,11 @@ import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { AuthProvider, useAuth } from '../lib/auth';
 import { LoadingSpinner } from '../components/ui/LoadingSpinner';
+import { usePushNotifications } from '../hooks/usePushNotifications';
 
 function RootNavigator() {
   const { session, profile, loading } = useAuth();
+  usePushNotifications();
   const router = useRouter();
   const segments = useSegments();
 
